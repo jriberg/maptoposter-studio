@@ -1,0 +1,17 @@
+<?xml version="1.0"?>
+<Container>
+  <Name>Map Poster Studio</Name>
+  <Repository>joafri/map-poster-studio:latest</Repository>
+  <Registry>https://hub.docker.com/r/joafri/map-poster-studio</Registry>
+  <Network>bridge</Network>
+  <Shell>bash</Shell>
+  <Privileged>false</Privileged>
+  <Support>https://github.com/joafri/maptoposter-webui</Support>
+  <Project>https://github.com/joafri/maptoposter-webui</Project>
+  <Overview>Generate minimalist city map posters from OpenStreetMap data with a simple web UI.</Overview>
+  <Category>Tools: Other</Category>
+  <WebUI>http://[IP]:[PORT:8000]</WebUI>
+  <Icon>https://raw.githubusercontent.com/joafri/maptoposter-webui/main/static/favicon-128.png</Icon>
+  <Config Name="WebUI Port" Target="8000" Default="8000" Mode="tcp" Description="HTTP port for the web UI." Type="Port" Display="always" Required="true"/>
+  <Config Name="Posters Output" Target="/app/posters" Default="/mnt/user/appdata/map-poster-studio/posters" Mode="rw" Description="Output directory for generated posters." Type="Path" Display="always" Required="true"/>
+</Container>

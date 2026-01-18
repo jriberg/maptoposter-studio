@@ -85,6 +85,7 @@
               <button class="btn" type="submit" id="generate-btn" disabled>Generate Poster</button>
               <button class="btn ghost" type="button" id="examples-btn">View examples</button>
               <button class="btn ghost" type="button" id="posters-btn">View posters</button>
+              <button class="btn ghost" type="button" id="trash-btn">Trashcan</button>
             </div>
             <p class="hint status" id="status">Generating can take a minute or two.</p>
           </form>
@@ -145,16 +146,62 @@
           </div>
           <div class="examples-grid">
             {% for poster in posters %}
-            <div class="example-card">
+            <div class="example-card" data-poster="{{ poster.filename }}">
               <img src="{{ poster.path }}" alt="Poster {{ poster.filename }}" loading="lazy" />
               <div class="example-meta">
                 <span>{{ poster.filename }}</span>
-                <a href="{{ poster.path }}" download>Download</a>
+                <div class="example-actions">
+                  <a href="{{ poster.path }}" download>Download</a>
+                  <button class="link-btn" type="button" data-delete="{{ poster.filename }}">Delete</button>
+                </div>
               </div>
+              {% if poster.meta %}
+              <div class="example-meta-details">
+                {% if poster.meta.City %}<span>{{ poster.meta.City }}, {{ poster.meta.Country }}</span>{% endif %}
+                {% if poster.meta.Theme %}<span>Theme: {{ poster.meta.Theme }}</span>{% endif %}
+                {% if poster.meta.DistanceMeters %}<span>Distance: {{ poster.meta.DistanceMeters }} m</span>{% endif %}
+                {% if poster.meta.GeneratedAt %}<span>Generated: {{ poster.meta.GeneratedAt }}</span>{% endif %}
+              </div>
+              {% endif %}
             </div>
             {% endfor %}
             {% if posters|length == 0 %}
             <p class="hint">No posters generated yet.</p>
+            {% endif %}
+          </div>
+        </div>
+      </div>
+
+      <div class="modal" id="trash-modal" aria-hidden="true">
+        <div class="modal-overlay" data-close="true"></div>
+        <div class="modal-card" role="dialog" aria-modal="true" aria-labelledby="trash-title">
+          <div class="modal-header">
+            <h2 id="trash-title">Trashcan</h2>
+            <button class="icon-btn" type="button" data-close="true" aria-label="Close trashcan">×</button>
+          </div>
+          <div class="examples-grid">
+            {% for poster in trash %}
+            <div class="example-card" data-trash="{{ poster.filename }}">
+              <img src="{{ poster.path }}" alt="Poster {{ poster.filename }}" loading="lazy" />
+              <div class="example-meta">
+                <span>{{ poster.filename }}</span>
+                <div class="example-actions">
+                  <button class="link-btn" type="button" data-restore="{{ poster.filename }}">Restore</button>
+                  <button class="link-btn danger" type="button" data-purge="{{ poster.filename }}">Permanently remove</button>
+                </div>
+              </div>
+              {% if poster.meta %}
+              <div class="example-meta-details">
+                {% if poster.meta.City %}<span>{{ poster.meta.City }}, {{ poster.meta.Country }}</span>{% endif %}
+                {% if poster.meta.Theme %}<span>Theme: {{ poster.meta.Theme }}</span>{% endif %}
+                {% if poster.meta.DistanceMeters %}<span>Distance: {{ poster.meta.DistanceMeters }} m</span>{% endif %}
+                {% if poster.meta.GeneratedAt %}<span>Generated: {{ poster.meta.GeneratedAt }}</span>{% endif %}
+              </div>
+              {% endif %}
+            </div>
+            {% endfor %}
+            {% if trash|length == 0 %}
+            <p class="hint">Trashcan is empty.</p>
             {% endif %}
           </div>
         </div>
@@ -273,6 +320,8 @@
       const examplesModal = document.getElementById("examples-modal");
       const postersButton = document.getElementById("posters-btn");
       const postersModal = document.getElementById("posters-modal");
+      const trashButton = document.getElementById("trash-btn");
+      const trashModal = document.getElementById("trash-modal");
 
       const toggleModal = (modal, show) => {
         modal.setAttribute("aria-hidden", show ? "false" : "true");
@@ -281,6 +330,7 @@
 
       examplesButton.addEventListener("click", () => toggleModal(examplesModal, true));
       postersButton.addEventListener("click", () => toggleModal(postersModal, true));
+      trashButton.addEventListener("click", () => toggleModal(trashModal, true));
       examplesModal.addEventListener("click", (event) => {
         if (event.target.dataset.close) {
           toggleModal(examplesModal, false);
@@ -289,6 +339,75 @@
       postersModal.addEventListener("click", (event) => {
         if (event.target.dataset.close) {
           toggleModal(postersModal, false);
+        }
+      });
+      trashModal.addEventListener("click", (event) => {
+        if (event.target.dataset.close) {
+          toggleModal(trashModal, false);
+        }
+      });
+
+      postersModal.addEventListener("click", async (event) => {
+        const target = event.target;
+        if (!target.dataset.delete) return;
+
+        const filename = target.dataset.delete;
+        const formData = new FormData();
+        formData.append("filename", filename);
+
+        const response = await fetch("/api/posters/delete", { method: "POST", body: formData });
+        const data = await response.json();
+
+        if (data.status !== "ok") {
+          status.textContent = data.error || "Unable to delete poster.";
+          return;
+        }
+
+        const card = postersModal.querySelector(`[data-poster="${filename}"]`);
+        if (card) {
+          card.remove();
+        }
+      });
+
+      trashModal.addEventListener("click", async (event) => {
+        const target = event.target;
+        if (target.dataset.restore) {
+          const filename = target.dataset.restore;
+          const formData = new FormData();
+          formData.append("filename", filename);
+
+          const response = await fetch("/api/posters/restore", { method: "POST", body: formData });
+          const data = await response.json();
+
+          if (data.status !== "ok") {
+            status.textContent = data.error || "Unable to restore poster.";
+            return;
+          }
+
+          const card = trashModal.querySelector(`[data-trash="${filename}"]`);
+          if (card) {
+            card.remove();
+          }
+          return;
+        }
+
+        if (target.dataset.purge) {
+          const filename = target.dataset.purge;
+          const formData = new FormData();
+          formData.append("filename", filename);
+
+          const response = await fetch("/api/posters/purge", { method: "POST", body: formData });
+          const data = await response.json();
+
+          if (data.status !== "ok") {
+            status.textContent = data.error || "Unable to remove poster.";
+            return;
+          }
+
+          const card = trashModal.querySelector(`[data-trash="${filename}"]`);
+          if (card) {
+            card.remove();
+          }
         }
       });
 

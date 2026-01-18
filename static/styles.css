@@ -274,15 +274,43 @@ select {
 }
 
 .example-meta {
-  display: flex;
-  justify-content: space-between;
+  display: grid;
+  gap: 6px;
   font-size: 0.85rem;
   color: #4b4139;
+  word-break: break-word;
+}
+
+.example-meta-details {
+  display: grid;
+  gap: 4px;
+  font-size: 0.8rem;
+  color: #6a5c52;
+}
+
+.example-actions {
+  display: inline-flex;
+  gap: 12px;
+  align-items: center;
+  flex-wrap: wrap;
 }
 
 .example-meta a {
   color: var(--accent-deep);
   text-decoration: none;
+}
+
+.link-btn {
+  border: none;
+  background: transparent;
+  color: #8a3c2a;
+  cursor: pointer;
+  font-size: 0.85rem;
+  padding: 0;
+}
+
+.link-btn.danger {
+  color: #b23a2a;
 }
 
 @media (max-width: 700px) {

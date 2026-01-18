@@ -18,6 +18,8 @@ import argparse
 THEMES_DIR = "themes"
 FONTS_DIR = "fonts"
 POSTERS_DIR = "posters"
+OUTPUT_FIGSIZE = (12, 15.6667)
+OUTPUT_DPI = 600
 
 def load_fonts():
     """
@@ -253,7 +255,7 @@ def create_poster(city, country, point, dist, output_file, theme, show_progress=
     
     # 2. Setup Plot
     print("Rendering map...")
-    fig, ax = plt.subplots(figsize=(12, 16), facecolor=theme['bg'])
+    fig, ax = plt.subplots(figsize=OUTPUT_FIGSIZE, facecolor=theme['bg'])
     ax.set_facecolor(theme['bg'])
     ax.set_position([0, 0, 1, 1])
     
@@ -350,8 +352,20 @@ def create_poster(city, country, point, dist, output_file, theme, show_progress=
             fontproperties=font_attr, zorder=11)
 
     # 5. Save
+    metadata = {
+        "Title": "Map Poster Studio",
+        "City": city,
+        "Country": country,
+        "Theme": theme.get("name", ""),
+        "ThemeId": theme.get("id", ""),
+        "DistanceMeters": str(dist),
+        "Latitude": f"{point[0]:.6f}",
+        "Longitude": f"{point[1]:.6f}",
+        "GeneratedAt": datetime.now().isoformat(timespec="seconds"),
+        "Source": "OpenStreetMap contributors",
+    }
     print(f"Saving to {output_file}...")
-    plt.savefig(output_file, dpi=300, facecolor=theme['bg'])
+    plt.savefig(output_file, dpi=OUTPUT_DPI, facecolor=theme['bg'], metadata=metadata)
     plt.close()
     print(f"✓ Done! Poster saved as {output_file}")
 

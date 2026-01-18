@@ -4,6 +4,8 @@ import time
 import uuid
 import ssl
 import certifi
+import shutil
+from PIL import Image
 from fastapi import FastAPI, Form, Request
 from fastapi.responses import HTMLResponse
 from fastapi.staticfiles import StaticFiles
@@ -20,9 +22,11 @@ from create_map_poster import (
 
 POSTERS_DIR = "posters"
 EXAMPLES_DIR = "examples"
+TRASH_DIR = "trashcan"
 
 os.makedirs(POSTERS_DIR, exist_ok=True)
 os.makedirs(EXAMPLES_DIR, exist_ok=True)
+os.makedirs(TRASH_DIR, exist_ok=True)
 
 app = FastAPI(title="Map Poster Studio")
 
@@ -30,6 +34,7 @@ templates = Jinja2Templates(directory="templates")
 app.mount("/static", StaticFiles(directory="static"), name="static")
 app.mount("/posters", StaticFiles(directory=POSTERS_DIR), name="posters")
 app.mount("/examples", StaticFiles(directory=EXAMPLES_DIR), name="examples")
+app.mount("/trashcan", StaticFiles(directory=TRASH_DIR), name="trashcan")
 
 _jobs = {}
 _jobs_lock = threading.Lock()
@@ -59,7 +64,27 @@ def _update_job(job_id, updates):
 def _get_job(job_id):
     with _jobs_lock:
         _prune_jobs(time.time())
-        return _jobs.get(job_id)
+    return _jobs.get(job_id)
+
+
+def _get_png_metadata(path):
+    try:
+        with Image.open(path) as img:
+            info = img.info or {}
+    except Exception:
+        return {}
+
+    keys = [
+        "Title",
+        "City",
+        "Country",
+        "Theme",
+        "DistanceMeters",
+        "Latitude",
+        "Longitude",
+        "GeneratedAt",
+    ]
+    return {key: info.get(key, "") for key in keys if info.get(key)}
 
 
 def _render_index(request, themes, values=None, result=None, error=None):
@@ -77,10 +102,26 @@ def _render_index(request, themes, values=None, result=None, error=None):
     for filename in sorted(os.listdir(POSTERS_DIR)):
         if not filename.lower().endswith(".png"):
             continue
+        path = os.path.join(POSTERS_DIR, filename)
+        meta = _get_png_metadata(path)
         posters.append(
             {
                 "filename": filename,
                 "path": f"/posters/{filename}",
+                "meta": meta,
+            }
+        )
+    trash = []
+    for filename in sorted(os.listdir(TRASH_DIR)):
+        if not filename.lower().endswith(".png"):
+            continue
+        path = os.path.join(TRASH_DIR, filename)
+        meta = _get_png_metadata(path)
+        trash.append(
+            {
+                "filename": filename,
+                "path": f"/trashcan/{filename}",
+                "meta": meta,
             }
         )
     return templates.TemplateResponse(
@@ -90,6 +131,7 @@ def _render_index(request, themes, values=None, result=None, error=None):
             "themes": themes,
             "examples": examples,
             "posters": posters,
+            "trash": trash,
             "values": values or {},
             "result": result,
             "error": error,
@@ -246,6 +288,56 @@ def geocode_api(query: str = "", country: str = ""):
         return {"status": "error", "error": str(exc)}
 
     return {"status": "ok", "lat": location.latitude, "lon": location.longitude}
+
+
+@app.post("/api/posters/delete")
+def delete_poster(filename: str = Form(...)):
+    safe_name = os.path.basename(filename)
+    if not safe_name.lower().endswith(".png"):
+        return {"status": "error", "error": "Invalid filename."}
+
+    source_path = os.path.join(POSTERS_DIR, safe_name)
+    if not os.path.exists(source_path):
+        return {"status": "error", "error": "Poster not found."}
+
+    trash_path = os.path.join(TRASH_DIR, safe_name)
+    if os.path.exists(trash_path):
+        stem, ext = os.path.splitext(safe_name)
+        trash_path = os.path.join(TRASH_DIR, f"{stem}_{int(time.time())}{ext}")
+    shutil.move(source_path, trash_path)
+    return {"status": "ok", "filename": os.path.basename(trash_path)}
+
+
+@app.post("/api/posters/restore")
+def restore_poster(filename: str = Form(...)):
+    safe_name = os.path.basename(filename)
+    if not safe_name.lower().endswith(".png"):
+        return {"status": "error", "error": "Invalid filename."}
+
+    source_path = os.path.join(TRASH_DIR, safe_name)
+    if not os.path.exists(source_path):
+        return {"status": "error", "error": "Poster not found."}
+
+    target_path = os.path.join(POSTERS_DIR, safe_name)
+    if os.path.exists(target_path):
+        stem, ext = os.path.splitext(safe_name)
+        target_path = os.path.join(POSTERS_DIR, f"{stem}_{int(time.time())}{ext}")
+    shutil.move(source_path, target_path)
+    return {"status": "ok", "filename": os.path.basename(target_path)}
+
+
+@app.post("/api/posters/purge")
+def purge_poster(filename: str = Form(...)):
+    safe_name = os.path.basename(filename)
+    if not safe_name.lower().endswith(".png"):
+        return {"status": "error", "error": "Invalid filename."}
+
+    source_path = os.path.join(TRASH_DIR, safe_name)
+    if not os.path.exists(source_path):
+        return {"status": "error", "error": "Poster not found."}
+
+    os.remove(source_path)
+    return {"status": "ok", "filename": safe_name}
 
 
 if __name__ == "__main__":
