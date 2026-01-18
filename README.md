@@ -1,4 +1,4 @@
-# City Map Poster Generator
+# Map Poster Studio
 
 Generate beautiful, minimalist map posters for any city in the world.
 
@@ -23,7 +23,9 @@ Generate beautiful, minimalist map posters for any city in the world.
 ## Installation
 
 ```bash
-pip install -r requirements.txt
+uv venv
+source .venv/bin/activate
+uv pip install -r requirements.txt
 ```
 
 ## Usage
@@ -31,6 +33,20 @@ pip install -r requirements.txt
 ```bash
 python create_map_poster.py --city <city> --country <country> [options]
 ```
+
+## Web UI
+
+Run a simple one-page FastAPI UI:
+
+```bash
+uv venv
+source .venv/bin/activate
+uv pip install -r requirements.txt
+python webui.py
+```
+
+Then open `http://127.0.0.1:8000` and generate posters from the form. Generated PNGs are saved in `posters/`.
+The preview map uses OpenStreetMap tiles (internet required).
 
 ### Options
 

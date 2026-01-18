@@ -1,9 +1,13 @@
+import matplotlib
+matplotlib.use("Agg")
 import osmnx as ox
 import matplotlib.pyplot as plt
 from matplotlib.font_manager import FontProperties
 import matplotlib.colors as mcolors
 import numpy as np
 from geopy.geocoders import Nominatim
+import ssl
+import certifi
 from tqdm import tqdm
 import time
 import json
@@ -94,9 +98,6 @@ def load_theme(theme_name="feature_based"):
             print(f"  {theme['description']}")
         return theme
 
-# Load theme (can be changed via command line or input)
-THEME = None  # Will be loaded later
-
 def create_gradient_fade(ax, color, location='bottom', zorder=10):
     """
     Creates a fade effect at the top or bottom of the map.
@@ -131,7 +132,7 @@ def create_gradient_fade(ax, color, location='bottom', zorder=10):
     ax.imshow(gradient, extent=[xlim[0], xlim[1], y_bottom, y_top], 
               aspect='auto', cmap=custom_cmap, zorder=zorder, origin='lower')
 
-def get_edge_colors_by_type(G):
+def get_edge_colors_by_type(G, theme):
     """
     Assigns colors to edges based on road type hierarchy.
     Returns a list of colors corresponding to each edge in the graph.
@@ -148,17 +149,17 @@ def get_edge_colors_by_type(G):
         
         # Assign color based on road type
         if highway in ['motorway', 'motorway_link']:
-            color = THEME['road_motorway']
+            color = theme['road_motorway']
         elif highway in ['trunk', 'trunk_link', 'primary', 'primary_link']:
-            color = THEME['road_primary']
+            color = theme['road_primary']
         elif highway in ['secondary', 'secondary_link']:
-            color = THEME['road_secondary']
+            color = theme['road_secondary']
         elif highway in ['tertiary', 'tertiary_link']:
-            color = THEME['road_tertiary']
+            color = theme['road_tertiary']
         elif highway in ['residential', 'living_street', 'unclassified']:
-            color = THEME['road_residential']
+            color = theme['road_residential']
         else:
-            color = THEME['road_default']
+            color = theme['road_default']
         
         edge_colors.append(color)
     
@@ -199,7 +200,8 @@ def get_coordinates(city, country):
     Includes rate limiting to be respectful to the geocoding service.
     """
     print("Looking up coordinates...")
-    geolocator = Nominatim(user_agent="city_map_poster")
+    ssl_context = ssl.create_default_context(cafile=certifi.where())
+    geolocator = Nominatim(user_agent="city_map_poster", ssl_context=ssl_context)
     
     # Add a small delay to respect Nominatim's usage policy
     time.sleep(1)
@@ -213,11 +215,17 @@ def get_coordinates(city, country):
     else:
         raise ValueError(f"Could not find coordinates for {city}, {country}")
 
-def create_poster(city, country, point, dist, output_file):
+def create_poster(city, country, point, dist, output_file, theme, show_progress=True):
     print(f"\nGenerating map for {city}, {country}...")
     
     # Progress bar for data fetching
-    with tqdm(total=3, desc="Fetching map data", unit="step", bar_format='{l_bar}{bar}| {n_fmt}/{total_fmt}') as pbar:
+    with tqdm(
+        total=3,
+        desc="Fetching map data",
+        unit="step",
+        bar_format='{l_bar}{bar}| {n_fmt}/{total_fmt}',
+        disable=not show_progress
+    ) as pbar:
         # 1. Fetch Street Network
         pbar.set_description("Downloading street network")
         G = ox.graph_from_point(point, dist=dist, dist_type='bbox', network_type='all')
@@ -245,24 +253,24 @@ def create_poster(city, country, point, dist, output_file):
     
     # 2. Setup Plot
     print("Rendering map...")
-    fig, ax = plt.subplots(figsize=(12, 16), facecolor=THEME['bg'])
-    ax.set_facecolor(THEME['bg'])
+    fig, ax = plt.subplots(figsize=(12, 16), facecolor=theme['bg'])
+    ax.set_facecolor(theme['bg'])
     ax.set_position([0, 0, 1, 1])
     
     # 3. Plot Layers
     # Layer 1: Polygons
     if water is not None and not water.empty:
-        water.plot(ax=ax, facecolor=THEME['water'], edgecolor='none', zorder=1)
+        water.plot(ax=ax, facecolor=theme['water'], edgecolor='none', zorder=1)
     if parks is not None and not parks.empty:
-        parks.plot(ax=ax, facecolor=THEME['parks'], edgecolor='none', zorder=2)
+        parks.plot(ax=ax, facecolor=theme['parks'], edgecolor='none', zorder=2)
     
     # Layer 2: Roads with hierarchy coloring
     print("Applying road hierarchy colors...")
-    edge_colors = get_edge_colors_by_type(G)
+    edge_colors = get_edge_colors_by_type(G, theme)
     edge_widths = get_edge_widths_by_type(G)
     
     ox.plot_graph(
-        G, ax=ax, bgcolor=THEME['bg'],
+        G, ax=ax, bgcolor=theme['bg'],
         node_size=0,
         edge_color=edge_colors,
         edge_linewidth=edge_widths,
@@ -270,8 +278,8 @@ def create_poster(city, country, point, dist, output_file):
     )
     
     # Layer 3: Gradients (Top and Bottom)
-    create_gradient_fade(ax, THEME['gradient_color'], location='bottom', zorder=10)
-    create_gradient_fade(ax, THEME['gradient_color'], location='top', zorder=10)
+    create_gradient_fade(ax, theme['gradient_color'], location='bottom', zorder=10)
+    create_gradient_fade(ax, theme['gradient_color'], location='top', zorder=10)
     
     # 4. Typography using Roboto font
     if FONTS:
@@ -286,25 +294,50 @@ def create_poster(city, country, point, dist, output_file):
         font_sub = FontProperties(family='monospace', weight='normal', size=22)
         font_coords = FontProperties(family='monospace', size=14)
     
-    spaced_city = "  ".join(list(city.upper()))
+    def split_city_lines(name):
+        if len(name) <= 14:
+            return [name]
+        words = name.split()
+        if len(words) > 1:
+            midpoint = len(words) // 2
+            line1 = " ".join(words[:midpoint]).strip()
+            line2 = " ".join(words[midpoint:]).strip()
+            return [line1, line2]
+        midpoint = len(name) // 2
+        return [name[:midpoint], name[midpoint:]]
+
+    city_lines = split_city_lines(city)
+    spaced_lines = ["  ".join(list(line.upper())) for line in city_lines]
 
     # --- BOTTOM TEXT ---
-    ax.text(0.5, 0.14, spaced_city, transform=ax.transAxes,
-            color=THEME['text'], ha='center', fontproperties=font_main, zorder=11)
+    if len(spaced_lines) == 1:
+        ax.text(0.5, 0.14, spaced_lines[0], transform=ax.transAxes,
+                color=theme['text'], ha='center', fontproperties=font_main, zorder=11)
+        line_y = 0.125
+        country_y = 0.10
+        coords_y = 0.07
+    else:
+        ax.text(0.5, 0.16, spaced_lines[0], transform=ax.transAxes,
+                color=theme['text'], ha='center', fontproperties=font_main, zorder=11)
+        ax.text(0.5, 0.13, spaced_lines[1], transform=ax.transAxes,
+                color=theme['text'], ha='center', fontproperties=font_main, zorder=11)
+        line_y = 0.11
+        country_y = 0.085
+        coords_y = 0.06
     
-    ax.text(0.5, 0.10, country.upper(), transform=ax.transAxes,
-            color=THEME['text'], ha='center', fontproperties=font_sub, zorder=11)
+    ax.text(0.5, country_y, country.upper(), transform=ax.transAxes,
+            color=theme['text'], ha='center', fontproperties=font_sub, zorder=11)
     
     lat, lon = point
     coords = f"{lat:.4f}° N / {lon:.4f}° E" if lat >= 0 else f"{abs(lat):.4f}° S / {lon:.4f}° E"
     if lon < 0:
         coords = coords.replace("E", "W")
     
-    ax.text(0.5, 0.07, coords, transform=ax.transAxes,
-            color=THEME['text'], alpha=0.7, ha='center', fontproperties=font_coords, zorder=11)
+    ax.text(0.5, coords_y, coords, transform=ax.transAxes,
+            color=theme['text'], alpha=0.7, ha='center', fontproperties=font_coords, zorder=11)
     
-    ax.plot([0.4, 0.6], [0.125, 0.125], transform=ax.transAxes, 
-            color=THEME['text'], linewidth=1, zorder=11)
+    ax.plot([0.4, 0.6], [line_y, line_y], transform=ax.transAxes, 
+            color=theme['text'], linewidth=1, zorder=11)
 
     # --- ATTRIBUTION (bottom right) ---
     if FONTS:
@@ -313,19 +346,19 @@ def create_poster(city, country, point, dist, output_file):
         font_attr = FontProperties(family='monospace', size=8)
     
     ax.text(0.98, 0.02, "© OpenStreetMap contributors", transform=ax.transAxes,
-            color=THEME['text'], alpha=0.5, ha='right', va='bottom', 
+            color=theme['text'], alpha=0.5, ha='right', va='bottom', 
             fontproperties=font_attr, zorder=11)
 
     # 5. Save
     print(f"Saving to {output_file}...")
-    plt.savefig(output_file, dpi=300, facecolor=THEME['bg'])
+    plt.savefig(output_file, dpi=300, facecolor=theme['bg'])
     plt.close()
     print(f"✓ Done! Poster saved as {output_file}")
 
 def print_examples():
     """Print usage examples."""
     print("""
-City Map Poster Generator
+Map Poster Studio
 =========================
 
 Usage:
@@ -448,17 +481,17 @@ Examples:
         os.sys.exit(1)
     
     print("=" * 50)
-    print("City Map Poster Generator")
+    print("Map Poster Studio")
     print("=" * 50)
     
     # Load theme
-    THEME = load_theme(args.theme)
+    theme = load_theme(args.theme)
     
     # Get coordinates and generate poster
     try:
         coords = get_coordinates(args.city, args.country)
         output_file = generate_output_filename(args.city, args.theme)
-        create_poster(args.city, args.country, coords, args.distance, output_file)
+        create_poster(args.city, args.country, coords, args.distance, output_file, theme)
         
         print("\n" + "=" * 50)
         print("✓ Poster generation complete!")

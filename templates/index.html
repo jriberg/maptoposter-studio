@@ -1,0 +1,355 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Map Poster Studio</title>
+    <link
+      rel="stylesheet"
+      href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css"
+      integrity="sha256-p4NxAoJBhIIN+hmNHrzRCf9tD/miZyoHS5obTRR9BMY="
+      crossorigin=""
+    />
+    <link rel="stylesheet" href="/static/styles.css" />
+  </head>
+  <body>
+    <main class="page">
+      <header class="hero">
+        <div>
+          <p class="eyebrow">Map Poster Studio</p>
+          <h1>Map Poster Studio</h1>
+          <p class="subhead">
+            Generate minimalist map posters from OpenStreetMap data. Choose a city, pick a theme,
+            and download the result.
+          </p>
+        </div>
+      </header>
+
+      <section class="split">
+        <div class="panel">
+          <form id="poster-form" class="form" method="post" action="/generate">
+            <div class="field">
+              <label for="city">City or Address</label>
+              <input
+                id="city"
+                name="city"
+                type="text"
+                placeholder="Tokyo"
+                required
+                value="{{ values.get('city', '') }}"
+              />
+            </div>
+
+            <div class="field">
+              <label for="country">Country</label>
+              <input
+                id="country"
+                name="country"
+                type="text"
+                placeholder="Japan"
+                required
+                value="{{ values.get('country', '') }}"
+              />
+            </div>
+
+            <div class="field">
+              <label for="theme">Theme</label>
+              <select id="theme" name="theme">
+                {% for item in themes %}
+                <option
+                  value="{{ item }}"
+                  {% if values.get('theme', 'feature_based') == item %}selected{% endif %}
+                >
+                  {{ item }}
+                </option>
+                {% endfor %}
+              </select>
+            </div>
+
+            <div class="field">
+              <label for="distance">Distance (meters)</label>
+              <input
+                id="distance"
+                name="distance"
+                type="number"
+                min="1000"
+                step="500"
+                value="{{ values.get('distance', 29000) }}"
+              />
+              <p class="hint">Try 8000-12000 for downtown, 15000+ for full metro views.</p>
+            </div>
+
+            <div class="actions">
+              <button class="btn secondary" type="button" id="search-btn">Search on map</button>
+              <button class="btn" type="submit" id="generate-btn" disabled>Generate Poster</button>
+              <button class="btn ghost" type="button" id="examples-btn">View examples</button>
+              <button class="btn ghost" type="button" id="posters-btn">View posters</button>
+            </div>
+            <p class="hint status" id="status">Generating can take a minute or two.</p>
+          </form>
+        </div>
+
+        <div class="panel preview">
+          <div class="result-header">
+            <h2>Preview map</h2>
+            <p class="hint" id="preview-status">Enter a city and country to preview.</p>
+          </div>
+          <div id="map"></div>
+          <p class="hint">Map tiles © OpenStreetMap contributors.</p>
+        </div>
+      </section>
+
+      {% if error %}
+      <section class="panel error">
+        <p>{{ error }}</p>
+      </section>
+      {% endif %}
+
+      <section class="panel result {% if not result %}is-hidden{% endif %}" id="result-panel">
+        <div class="result-header">
+          <h2>Your poster is ready</h2>
+          <a class="btn secondary" id="download-link" href="{{ result.path if result else '#' }}" download>Download PNG</a>
+        </div>
+        <img id="result-image" src="{{ result.path if result else '' }}" alt="Generated poster" />
+        <p class="hint" id="result-filename">{% if result %}Saved as {{ result.filename }}{% endif %}</p>
+      </section>
+
+      <div class="modal" id="examples-modal" aria-hidden="true">
+        <div class="modal-overlay" data-close="true"></div>
+        <div class="modal-card" role="dialog" aria-modal="true" aria-labelledby="examples-title">
+          <div class="modal-header">
+            <h2 id="examples-title">Theme examples</h2>
+            <button class="icon-btn" type="button" data-close="true" aria-label="Close examples">×</button>
+          </div>
+          <div class="examples-grid">
+            {% for example in examples %}
+            <div class="example-card">
+              <img src="{{ example.path }}" alt="Example for {{ example.theme }}" loading="lazy" />
+              <div class="example-meta">
+                <span>{{ example.theme }}</span>
+                <a href="{{ example.path }}" download>Download</a>
+              </div>
+            </div>
+            {% endfor %}
+          </div>
+        </div>
+      </div>
+
+      <div class="modal" id="posters-modal" aria-hidden="true">
+        <div class="modal-overlay" data-close="true"></div>
+        <div class="modal-card" role="dialog" aria-modal="true" aria-labelledby="posters-title">
+          <div class="modal-header">
+            <h2 id="posters-title">Generated posters</h2>
+            <button class="icon-btn" type="button" data-close="true" aria-label="Close posters">×</button>
+          </div>
+          <div class="examples-grid">
+            {% for poster in posters %}
+            <div class="example-card">
+              <img src="{{ poster.path }}" alt="Poster {{ poster.filename }}" loading="lazy" />
+              <div class="example-meta">
+                <span>{{ poster.filename }}</span>
+                <a href="{{ poster.path }}" download>Download</a>
+              </div>
+            </div>
+            {% endfor %}
+            {% if posters|length == 0 %}
+            <p class="hint">No posters generated yet.</p>
+            {% endif %}
+          </div>
+        </div>
+      </div>
+    </main>
+
+    <script
+      src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"
+      integrity="sha256-20nQCchB9co0qIjJZRGuk2/Z9VM+kNiyxNV1lvTlZBo="
+      crossorigin=""
+    ></script>
+    <script>
+      const defaultLat = 20.0;
+      const defaultLon = 0.0;
+      const map = L.map("map", { zoomControl: false }).setView([defaultLat, defaultLon], 2);
+      L.control.zoom({ position: "bottomright" }).addTo(map);
+
+      L.tileLayer("https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png", {
+        maxZoom: 18,
+        attribution: "&copy; OpenStreetMap contributors",
+      }).addTo(map);
+
+      const previewStatus = document.getElementById("preview-status");
+      const cityInput = document.getElementById("city");
+      const countryInput = document.getElementById("country");
+      const distanceInput = document.getElementById("distance");
+      const searchButton = document.getElementById("search-btn");
+
+      let marker = null;
+      let radiusCircle = null;
+      let previewTimer = null;
+
+      const updateCircle = (distanceMeters) => {
+        if (!radiusCircle) return;
+        radiusCircle.setRadius(distanceMeters);
+      };
+
+      const updatePreview = async () => {
+        const city = cityInput.value.trim();
+        const country = countryInput.value.trim();
+        const distance = Number(distanceInput.value || 0);
+
+        if (!city && !country) {
+          previewStatus.textContent = "Enter a city/address and country to preview.";
+          generateButton.disabled = true;
+          return;
+        }
+
+        previewStatus.textContent = "Finding location...";
+        const params = new URLSearchParams({ query: city, country });
+        let data;
+        try {
+          const response = await fetch(`/api/geocode?${params.toString()}`);
+          data = await response.json();
+        } catch (error) {
+          previewStatus.textContent = "Unable to reach geocoding service.";
+          generateButton.disabled = true;
+          return;
+        }
+
+        if (data.status !== "ok") {
+          previewStatus.textContent = data.error || "Location not found.";
+          generateButton.disabled = true;
+          return;
+        }
+
+        previewStatus.textContent = `Previewing ${city}, ${country}`;
+        generateButton.disabled = false;
+        const latLng = [data.lat, data.lon];
+
+        if (!marker) {
+          marker = L.marker(latLng).addTo(map);
+        } else {
+          marker.setLatLng(latLng);
+        }
+
+        if (!radiusCircle) {
+          radiusCircle = L.circle(latLng, {
+            radius: Math.max(distance, 1000),
+            color: "#d9794d",
+            weight: 2,
+            fillOpacity: 0.15,
+          }).addTo(map);
+        } else {
+          radiusCircle.setLatLng(latLng);
+          updateCircle(Math.max(distance, 1000));
+        }
+
+        map.setView(latLng, distance > 15000 ? 10 : 12);
+      };
+
+      const schedulePreview = () => {
+        if (previewTimer) window.clearTimeout(previewTimer);
+        previewTimer = window.setTimeout(updatePreview, 600);
+      };
+
+      cityInput.addEventListener("input", schedulePreview);
+      countryInput.addEventListener("input", schedulePreview);
+      cityInput.addEventListener("blur", updatePreview);
+      countryInput.addEventListener("blur", updatePreview);
+      distanceInput.addEventListener("input", () => {
+        updateCircle(Math.max(Number(distanceInput.value || 0), 1000));
+      });
+      searchButton.addEventListener("click", () => {
+        updatePreview();
+      });
+
+      const form = document.getElementById("poster-form");
+      const status = document.getElementById("status");
+      const resultPanel = document.getElementById("result-panel");
+      const resultImage = document.getElementById("result-image");
+      const resultFilename = document.getElementById("result-filename");
+      const downloadLink = document.getElementById("download-link");
+      const generateButton = document.getElementById("generate-btn");
+      const examplesButton = document.getElementById("examples-btn");
+      const examplesModal = document.getElementById("examples-modal");
+      const postersButton = document.getElementById("posters-btn");
+      const postersModal = document.getElementById("posters-modal");
+
+      const toggleModal = (modal, show) => {
+        modal.setAttribute("aria-hidden", show ? "false" : "true");
+        modal.classList.toggle("is-open", show);
+      };
+
+      examplesButton.addEventListener("click", () => toggleModal(examplesModal, true));
+      postersButton.addEventListener("click", () => toggleModal(postersModal, true));
+      examplesModal.addEventListener("click", (event) => {
+        if (event.target.dataset.close) {
+          toggleModal(examplesModal, false);
+        }
+      });
+      postersModal.addEventListener("click", (event) => {
+        if (event.target.dataset.close) {
+          toggleModal(postersModal, false);
+        }
+      });
+
+      const startPolling = (jobId) => {
+        const poll = async () => {
+          const response = await fetch(`/api/status/${jobId}`);
+          const data = await response.json();
+
+          if (data.status === "queued" || data.status === "running") {
+            status.textContent = data.status === "queued"
+              ? "Queued... starting soon."
+              : "Generating... this may take a couple of minutes.";
+            setTimeout(poll, 3000);
+            return;
+          }
+
+          if (data.status === "done") {
+            status.textContent = "Done! Preview below.";
+            resultImage.src = data.path;
+            downloadLink.href = data.path;
+            resultFilename.textContent = `Saved as ${data.filename}`;
+            resultPanel.classList.remove("is-hidden");
+            form.classList.remove("is-loading");
+            return;
+          }
+
+          status.textContent = data.error || "Something went wrong.";
+          form.classList.remove("is-loading");
+        };
+
+        poll();
+      };
+
+      form.addEventListener("keydown", (event) => {
+        if (event.key === "Enter") {
+          event.preventDefault();
+          updatePreview();
+        }
+      });
+
+      form.addEventListener("submit", async (event) => {
+        event.preventDefault();
+        if (generateButton.disabled) {
+          status.textContent = "Search for a location before generating.";
+          return;
+        }
+        form.classList.add("is-loading");
+        status.textContent = "Sending request...";
+
+        const formData = new FormData(form);
+        const response = await fetch("/api/generate", { method: "POST", body: formData });
+        const data = await response.json();
+
+        if (data.status !== "queued") {
+          status.textContent = data.error || "Unable to start the job.";
+          form.classList.remove("is-loading");
+          return;
+        }
+
+        resultPanel.classList.add("is-hidden");
+        startPolling(data.job_id);
+      });
+    </script>
+  </body>
+</html>
