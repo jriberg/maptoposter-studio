@@ -6,6 +6,8 @@ import ssl
 import certifi
 import shutil
 from PIL import Image
+import strawberry
+from strawberry.fastapi import GraphQLRouter
 from fastapi import FastAPI, Form, Request
 from fastapi.responses import HTMLResponse
 from fastapi.staticfiles import StaticFiles
@@ -87,7 +89,7 @@ def _get_png_metadata(path):
     return {key: info.get(key, "") for key in keys if info.get(key)}
 
 
-def _render_index(request, themes, values=None, result=None, error=None):
+def _list_examples(themes):
     examples = []
     for theme_name in themes:
         filename = f"racksta_1000m_{theme_name}.png"
@@ -98,32 +100,30 @@ def _render_index(request, themes, values=None, result=None, error=None):
                 "path": f"/examples/{filename}",
             }
         )
+    return examples
+
+
+def _list_posters(folder, url_prefix):
     posters = []
-    for filename in sorted(os.listdir(POSTERS_DIR)):
+    for filename in sorted(os.listdir(folder)):
         if not filename.lower().endswith(".png"):
             continue
-        path = os.path.join(POSTERS_DIR, filename)
+        path = os.path.join(folder, filename)
         meta = _get_png_metadata(path)
         posters.append(
             {
                 "filename": filename,
-                "path": f"/posters/{filename}",
+                "path": f"{url_prefix}/{filename}",
                 "meta": meta,
             }
         )
-    trash = []
-    for filename in sorted(os.listdir(TRASH_DIR)):
-        if not filename.lower().endswith(".png"):
-            continue
-        path = os.path.join(TRASH_DIR, filename)
-        meta = _get_png_metadata(path)
-        trash.append(
-            {
-                "filename": filename,
-                "path": f"/trashcan/{filename}",
-                "meta": meta,
-            }
-        )
+    return posters
+
+
+def _render_index(request, themes, values=None, result=None, error=None):
+    examples = _list_examples(themes)
+    posters = _list_posters(POSTERS_DIR, "/posters")
+    trash = _list_posters(TRASH_DIR, "/trashcan")
     return templates.TemplateResponse(
         "index.html",
         {
@@ -290,8 +290,7 @@ def geocode_api(query: str = "", country: str = ""):
     return {"status": "ok", "lat": location.latitude, "lon": location.longitude}
 
 
-@app.post("/api/posters/delete")
-def delete_poster(filename: str = Form(...)):
+def delete_poster_api(filename: str):
     safe_name = os.path.basename(filename)
     if not safe_name.lower().endswith(".png"):
         return {"status": "error", "error": "Invalid filename."}
@@ -308,8 +307,12 @@ def delete_poster(filename: str = Form(...)):
     return {"status": "ok", "filename": os.path.basename(trash_path)}
 
 
-@app.post("/api/posters/restore")
-def restore_poster(filename: str = Form(...)):
+@app.post("/api/posters/delete")
+def delete_poster(filename: str = Form(...)):
+    return delete_poster_api(filename)
+
+
+def restore_poster_api(filename: str):
     safe_name = os.path.basename(filename)
     if not safe_name.lower().endswith(".png"):
         return {"status": "error", "error": "Invalid filename."}
@@ -326,8 +329,12 @@ def restore_poster(filename: str = Form(...)):
     return {"status": "ok", "filename": os.path.basename(target_path)}
 
 
-@app.post("/api/posters/purge")
-def purge_poster(filename: str = Form(...)):
+@app.post("/api/posters/restore")
+def restore_poster(filename: str = Form(...)):
+    return restore_poster_api(filename)
+
+
+def purge_poster_api(filename: str):
     safe_name = os.path.basename(filename)
     if not safe_name.lower().endswith(".png"):
         return {"status": "error", "error": "Invalid filename."}
@@ -338,6 +345,149 @@ def purge_poster(filename: str = Form(...)):
 
     os.remove(source_path)
     return {"status": "ok", "filename": safe_name}
+
+
+@app.post("/api/posters/purge")
+def purge_poster(filename: str = Form(...)):
+    return purge_poster_api(filename)
+
+
+@strawberry.type
+class Meta:
+    Title: str | None = None
+    City: str | None = None
+    Country: str | None = None
+    Theme: str | None = None
+    DistanceMeters: str | None = None
+    Latitude: str | None = None
+    Longitude: str | None = None
+    GeneratedAt: str | None = None
+
+
+@strawberry.type
+class FileItem:
+    filename: str
+    path: str
+    theme: str | None = None
+    meta: Meta | None = None
+
+
+@strawberry.type
+class JobStatus:
+    status: str
+    job_id: str | None = None
+    filename: str | None = None
+    path: str | None = None
+    error: str | None = None
+
+
+@strawberry.type
+class GeocodeResult:
+    status: str
+    lat: float | None = None
+    lon: float | None = None
+    error: str | None = None
+
+
+def _meta_from_dict(data):
+    if not data:
+        return None
+    return Meta(**data)
+
+
+@strawberry.type
+class Query:
+    @strawberry.field
+    def themes(self) -> list[str]:
+        return get_available_themes()
+
+    @strawberry.field
+    def examples(self) -> list[FileItem]:
+        examples = _list_examples(get_available_themes())
+        return [
+            FileItem(
+                filename=item["filename"],
+                path=item["path"],
+                theme=item["theme"],
+                meta=None,
+            )
+            for item in examples
+        ]
+
+    @strawberry.field
+    def posters(self) -> list[FileItem]:
+        posters = _list_posters(POSTERS_DIR, "/posters")
+        return [
+            FileItem(
+                filename=item["filename"],
+                path=item["path"],
+                theme=None,
+                meta=_meta_from_dict(item.get("meta")),
+            )
+            for item in posters
+        ]
+
+    @strawberry.field
+    def trash(self) -> list[FileItem]:
+        trash = _list_posters(TRASH_DIR, "/trashcan")
+        return [
+            FileItem(
+                filename=item["filename"],
+                path=item["path"],
+                theme=None,
+                meta=_meta_from_dict(item.get("meta")),
+            )
+            for item in trash
+        ]
+
+    @strawberry.field
+    def job(self, job_id: str) -> JobStatus:
+        job = _get_job(job_id)
+        if not job:
+            return JobStatus(status="error", error="Job not found.")
+        return JobStatus(
+            status=job.get("status"),
+            job_id=job_id,
+            filename=job.get("filename"),
+            path=job.get("path"),
+            error=job.get("error"),
+        )
+
+
+@strawberry.type
+class Mutation:
+    @strawberry.mutation
+    def geocode(self, query: str, country: str = "") -> GeocodeResult:
+        result = geocode_api(query=query, country=country)
+        return GeocodeResult(**result)
+
+    @strawberry.mutation
+    def generate(self, city: str, country: str, theme: str = "feature_based", distance: int = 29000) -> JobStatus:
+        result = generate_api(city=city, country=country, theme=theme, distance=distance)
+        return JobStatus(
+            status=result.get("status"),
+            job_id=result.get("job_id"),
+            error=result.get("error"),
+        )
+
+    @strawberry.mutation
+    def delete_poster(self, filename: str) -> JobStatus:
+        result = delete_poster_api(filename)
+        return JobStatus(status=result.get("status"), filename=result.get("filename"), error=result.get("error"))
+
+    @strawberry.mutation
+    def restore_poster(self, filename: str) -> JobStatus:
+        result = restore_poster_api(filename)
+        return JobStatus(status=result.get("status"), filename=result.get("filename"), error=result.get("error"))
+
+    @strawberry.mutation
+    def purge_poster(self, filename: str) -> JobStatus:
+        result = purge_poster_api(filename)
+        return JobStatus(status=result.get("status"), filename=result.get("filename"), error=result.get("error"))
+
+
+schema = strawberry.Schema(query=Query, mutation=Mutation)
+app.include_router(GraphQLRouter(schema), prefix="/graphql")
 
 
 if __name__ == "__main__":

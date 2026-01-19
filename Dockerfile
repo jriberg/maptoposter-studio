@@ -12,8 +12,10 @@ RUN apt-get update \
         gcc \
     && rm -rf /var/lib/apt/lists/*
 
+RUN pip install --no-cache-dir uv
+
 COPY requirements.txt /app/
-RUN pip install --no-cache-dir -r requirements.txt
+RUN uv pip install --system --no-cache-dir -r requirements.txt
 
 COPY . /app
 
